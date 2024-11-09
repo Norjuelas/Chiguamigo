@@ -1,2 +1,2 @@
 # Chiguamigo
-Repo Hackaton_civerpaz 2024
+Repo Hackaton_ciberpaz 2024
