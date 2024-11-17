@@ -4,3 +4,8 @@ tweepy
 
 requests
 requests-oauthlib
+
+
+#selenium requirements
+selenium
+logging
