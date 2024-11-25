@@ -6,8 +6,8 @@ import pandas as pd
 
 from progress import Progress
 from scroller import Scroller
-#from tweet import Tweet
-
+from tweet import Tweet
+ 
 from datetime import datetime
 from fake_headers import Headers
 from time import sleep
@@ -30,6 +30,12 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 from webdriver_manager.chrome import ChromeDriverManager
 from webdriver_manager.firefox import GeckoDriverManager
+
+from selenium.webdriver.common.by import By
+
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.keys import Keys  # Si usas teclas como PAGE_DOWN
+
 
 TWITTER_LOGIN_URL = "https://twitter.com/i/flow/login"
 
@@ -325,3 +331,254 @@ It may be due to the following:
             self.driver.get(f"https://twitter.com/{self.scraper_details['username']}")
             sleep(3)
         pass
+    
+    def scrape_tweets(
+        self,
+        max_tweets=50,
+        no_tweets_limit=False,
+        scrape_username=None,
+        scrape_hashtag=None,
+        scrape_query=None,
+        scrape_latest=True,
+        scrape_top=False,
+        scrape_poster_details=False,
+        router=None,
+    ):
+        self._config_scraper(
+            max_tweets,
+            scrape_username,
+            scrape_hashtag,
+            scrape_query,
+            scrape_latest,
+            scrape_top,
+            scrape_poster_details,
+        )
+
+        if router is None:
+            router = self.router
+
+        router()
+
+        if self.scraper_details["type"] == "Username":
+            print(
+                "Scraping Tweets from @{}...".format(self.scraper_details["username"])
+            )
+        elif self.scraper_details["type"] == "Hashtag":
+            print(
+                "Scraping {} Tweets from #{}...".format(
+                    self.scraper_details["tab"], self.scraper_details["hashtag"]
+                )
+            )
+        elif self.scraper_details["type"] == "Query":
+            print(
+                "Scraping {} Tweets from {} search...".format(
+                    self.scraper_details["tab"], self.scraper_details["query"]
+                )
+            )
+        elif self.scraper_details["type"] == "Home":
+            print("Scraping Tweets from Home...")
+
+        # Accept cookies to make the banner disappear
+        try:
+            accept_cookies_btn = self.driver.find_element(
+            "xpath", "//span[text()='Refuse non-essential cookies']/../../..")
+            accept_cookies_btn.click()
+        except NoSuchElementException:
+            pass
+
+        self.progress.print_progress(0, False, 0, no_tweets_limit)
+
+        refresh_count = 0
+        added_tweets = 0
+        empty_count = 0
+        retry_cnt = 0
+
+        while self.scroller.scrolling:
+            try:
+                self.get_tweet_cards()
+                added_tweets = 0
+
+                for card in self.tweet_cards[-15:]:
+                    try:
+                        tweet_id = str(card)
+
+                        if tweet_id not in self.tweet_ids:
+                            self.tweet_ids.add(tweet_id)
+
+                            if not self.scraper_details["poster_details"]:
+                                self.driver.execute_script(
+                                    "arguments[0].scrollIntoView();", card
+                                )
+
+                            tweet = Tweet(
+                                card=card,
+                                driver=self.driver,
+                                actions=self.actions,
+                                scrape_poster_details=self.scraper_details[
+                                    "poster_details"
+                                ],
+                            )
+
+                            if tweet:
+                                if not tweet.error and tweet.tweet is not None:
+                                    if not tweet.is_ad:
+                                        self.data.append(tweet.tweet)
+                                        added_tweets += 1
+                                        self.progress.print_progress(len(self.data), False, 0, no_tweets_limit)
+
+                                        if len(self.data) >= self.max_tweets and not no_tweets_limit:
+                                            self.scroller.scrolling = False
+                                            break
+                                    else:
+                                        continue
+                                else:
+                                    continue
+                            else:
+                                continue
+                        else:
+                            continue
+                    except NoSuchElementException:
+                        continue
+
+                if len(self.data) >= self.max_tweets and not no_tweets_limit:
+                    break
+
+                if added_tweets == 0:
+                    # Check if there is a button "Retry" and click on it with a regular basis until a certain amount of tries
+                    try:
+                        while retry_cnt < 15:
+                            retry_button = self.driver.find_element(
+                            "xpath", "//span[text()='Retry']/../../..")
+                            self.progress.print_progress(len(self.data), True, retry_cnt, no_tweets_limit)
+                            sleep(58)
+                            retry_button.click()
+                            retry_cnt += 1
+                            sleep(2)
+                    # There is no Retry button so the counter is reseted
+                    except NoSuchElementException:
+                        retry_cnt = 0
+                        self.progress.print_progress(len(self.data), False, 0, no_tweets_limit)
+
+                    if empty_count >= 5:
+                        if refresh_count >= 3:
+                            print()
+                            print("No more tweets to scrape")
+                            break
+                        refresh_count += 1
+                    empty_count += 1
+                    sleep(1)
+                else:
+                    empty_count = 0
+                    refresh_count = 0
+            except StaleElementReferenceException:
+                sleep(2)
+                continue
+            except KeyboardInterrupt:
+                print("\n")
+                print("Keyboard Interrupt")
+                self.interrupted = True
+                break
+            except Exception as e:
+                print("\n")
+                print(f"Error scraping tweets: {e}")
+                break
+
+        print("")
+
+        if len(self.data) >= self.max_tweets or no_tweets_limit:
+            print("Scraping Complete")
+        else:
+            print("Scraping Incomplete")
+
+        if not no_tweets_limit:
+            print("Tweets: {} out of {}\n".format(len(self.data), self.max_tweets))
+
+        pass
+
+    def get_tweet_cards(self):
+        self.tweet_cards = self.driver.find_elements(
+            "xpath", '//article[@data-testid="tweet" and not(@disabled)]'
+        )
+        pass
+
+    def save_to_csv(self):
+        print("Saving Tweets to CSV...")
+        now = datetime.now()
+        folder_path = "./tweets/"
+
+        if not os.path.exists(folder_path):
+            os.makedirs(folder_path)
+            print("Created Folder: {}".format(folder_path))
+
+        data = {
+            "Name": [tweet[0] for tweet in self.data],
+            "Handle": [tweet[1] for tweet in self.data],
+            "Timestamp": [tweet[2] for tweet in self.data],
+            "Verified": [tweet[3] for tweet in self.data],
+            "Content": [tweet[4] for tweet in self.data],
+            "Comments": [tweet[5] for tweet in self.data],
+            "Retweets": [tweet[6] for tweet in self.data],
+            "Likes": [tweet[7] for tweet in self.data],
+            "Analytics": [tweet[8] for tweet in self.data],
+            "Tags": [tweet[9] for tweet in self.data],
+            "Mentions": [tweet[10] for tweet in self.data],
+            "Emojis": [tweet[11] for tweet in self.data],
+            "Profile Image": [tweet[12] for tweet in self.data],
+            "Tweet Link": [tweet[13] for tweet in self.data],
+            "Tweet ID": [f"tweet_id:{tweet[14]}" for tweet in self.data],
+        }
+
+        if self.scraper_details["poster_details"]:
+            data["Tweeter ID"] = [f"user_id:{tweet[15]}" for tweet in self.data]
+            data["Following"] = [tweet[16] for tweet in self.data]
+            data["Followers"] = [tweet[17] for tweet in self.data]
+
+        df = pd.DataFrame(data)
+
+        current_time = now.strftime("%Y-%m-%d_%H-%M-%S")
+        file_path = f"{folder_path}{current_time}_tweets_1-{len(self.data)}.csv"
+        pd.set_option("display.max_colwidth", None)
+        df.to_csv(file_path, index=False, encoding="utf-8")
+
+        print("CSV Saved: {}".format(file_path))
+
+        pass
+
+    def get_tweets(self):
+        return self.data
+    
+    def reply(self, message: str, tweet_id=None, tweet_url=None):
+        """
+        Reply to a specific tweet with the given message.
+        """
+        try:
+            # Navega al tweet usando su URL o ID
+            if tweet_url:
+                self.driver.get(tweet_url)
+            elif tweet_id:
+                self.driver.get(f"https://twitter.com/anybody/status/{tweet_id}")
+            
+            sleep(3)  # Espera para cargar la página
+
+            # Esperar y localizar la caja de texto para el mensaje
+            print("Buscando caja de texto para respuesta...")
+            reply_box = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "[data-testid='tweetTextarea_0']"))
+            )
+            print("Caja de texto encontrada, escribiendo mensaje...")
+            reply_box.send_keys(message)
+
+            # Esperar y localizar el botón de enviar tweet
+            print("Buscando botón de tweet...")
+            tweet_button = WebDriverWait(self.driver, 10).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "[data-testid='tweetButtonInline']"))
+            )
+            print("Botón de tweet encontrado, intentando hacer clic...")
+            tweet_button.click()
+            
+            print("Respuesta enviada exitosamente.")
+            return True
+
+        except Exception as e:
+            print(f"Error al responder el tweet: {e}")
+            return False

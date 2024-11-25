@@ -8,6 +8,7 @@ from selenium.webdriver.common.action_chains import ActionChains
 
 
 class Tweet:
+    
     def __init__(
         self,
         card: WebDriver,
