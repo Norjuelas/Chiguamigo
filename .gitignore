@@ -163,3 +163,4 @@ cython_debug/
 key
 tweets
 Chiguamigo.code-workspace
+resultados_scraping.csv

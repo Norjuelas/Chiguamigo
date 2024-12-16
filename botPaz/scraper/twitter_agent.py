@@ -275,7 +275,7 @@ It may be due to the following:
                 unusual_activity = self.driver.find_element(
                     "xpath", "//input[@data-testid='ocfEnterTextTextInput']"
                 )
-                unusual_activity.send_keys(self.username)
+                unusual_activity.send_keys(self.mail)
                 unusual_activity.send_keys(Keys.RETURN)
                 sleep(3)
                 break
@@ -319,6 +319,17 @@ It may be due to the following:
         self.driver.get("https://twitter.com/home")
         sleep(3)
         pass
+
+    def go_to_tweet(self,username,tweet_id):
+        if not tweet_id or not isinstance(tweet_id, str):
+            raise ValueError("El tweet_id no es válido o no se ha proporcionado.")
+
+        try:
+            self.driver.get(f"https://twitter.com/{username}/status/{tweet_id}")
+            sleep(3)
+        except Exception as e:
+            print(f"Error al intentar navegar al tweet: {e}")
+            pass
 
     def go_to_profile(self):
         if (
@@ -500,6 +511,35 @@ It may be due to the following:
             "xpath", '//article[@data-testid="tweet" and not(@disabled)]'
         )
         pass
+    
+    def make_pd(self):
+            
+        data = {
+            "Name": [tweet[0] for tweet in self.data],
+            "Handle": [tweet[1] for tweet in self.data],
+            "Timestamp": [tweet[2] for tweet in self.data],
+            "Verified": [tweet[3] for tweet in self.data],
+            "Content": [tweet[4] for tweet in self.data],
+            "Comments": [tweet[5] for tweet in self.data],
+            "Retweets": [tweet[6] for tweet in self.data],
+            "Likes": [tweet[7] for tweet in self.data],
+            "Analytics": [tweet[8] for tweet in self.data],
+            "Tags": [tweet[9] for tweet in self.data],
+            "Mentions": [tweet[10] for tweet in self.data],
+            "Emojis": [tweet[11] for tweet in self.data],
+            "Profile Image": [tweet[12] for tweet in self.data],
+            "Tweet Link": [tweet[13] for tweet in self.data],
+            "Tweet ID": [tweet[14] for tweet in self.data],
+        }
+
+        if self.scraper_details["poster_details"]:
+            data["Tweeter ID"] = [f"user_id:{tweet[15]}" for tweet in self.data]
+            data["Following"] = [tweet[16] for tweet in self.data]
+            data["Followers"] = [tweet[17] for tweet in self.data]
+        
+        df = pd.DataFrame(data)
+        
+        return df
 
     def save_to_csv(self):
         print("Saving Tweets to CSV...")
@@ -525,7 +565,7 @@ It may be due to the following:
             "Emojis": [tweet[11] for tweet in self.data],
             "Profile Image": [tweet[12] for tweet in self.data],
             "Tweet Link": [tweet[13] for tweet in self.data],
-            "Tweet ID": [f"tweet_id:{tweet[14]}" for tweet in self.data],
+            "Tweet ID": [{tweet[14]} for tweet in self.data],
         }
 
         if self.scraper_details["poster_details"]:
@@ -574,7 +614,8 @@ It may be due to the following:
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "[data-testid='tweetButtonInline']"))
             )
             print("Botón de tweet encontrado, intentando hacer clic...")
-            tweet_button.click()
+            self.driver.execute_script("arguments[0].click();", tweet_button)
+
             
             print("Respuesta enviada exitosamente.")
             return True
@@ -582,3 +623,71 @@ It may be due to the following:
         except Exception as e:
             print(f"Error al responder el tweet: {e}")
             return False
+        
+    def scrape_replys(self,username, tweet_id: int, max_tweets: int = 50):
+        """
+        Scrapea respuestas de un tweet dado su ID.
+        
+        Args:
+            tweet_id (int): ID del tweet del que se desea obtener respuestas.
+            max_tweets (int): Número máximo de respuestas a scrapear.
+        """
+        try:
+            # Navegar al tweet utilizando su ID
+            print(f"Navegando al tweet con ID {tweet_id}...")
+            self.go_to_tweet(username,str(tweet_id))
+
+            # Inicializar variables para el scraping
+            replies = []
+            added_tweets = 0
+
+            # Asegurarse de que el banner de cookies no interrumpa el scraping
+            try:
+                accept_cookies_btn = self.driver.find_element(
+                    "xpath", "//span[text()='Refuse non-essential cookies']/../../.."
+                )
+                accept_cookies_btn.click()
+            except NoSuchElementException:
+                pass
+
+            # Iniciar el proceso de scraping
+            while len(replies) < max_tweets:
+                try:
+                    self.get_tweet_cards()
+                    for card in self.tweet_cards[-15:]:
+                        try:
+                            # Crear un objeto Tweet para cada respuesta
+                            reply = Tweet(
+                                card=card,
+                                driver=self.driver,
+                                actions=self.actions,
+                                scrape_poster_details=False,
+                            )
+
+                            # Validar que la respuesta sea válida y no un anuncio
+                            if reply and not reply.error and reply.tweet and not reply.is_ad:
+                                replies.append(reply.tweet)
+                                added_tweets += 1
+                                print(f"Respuestas scrapeadas: {len(replies)}/{max_tweets}")
+
+                                # Detener si alcanzamos el límite de respuestas
+                                if len(replies) >= max_tweets:
+                                    break
+                        except NoSuchElementException:
+                            continue
+
+                    # Hacer scroll para cargar más respuestas
+                    self.scroller.scroll()
+
+                except StaleElementReferenceException:
+                    print("Elemento desactualizado, intentando nuevamente...")
+                    continue
+
+            print(f"Scraping completado. Total de respuestas obtenidas: {len(replies)}")
+            return replies
+
+        except Exception as e:
+            print(f"Error durante el scraping de respuestas: {e}")
+            return []
+
+
